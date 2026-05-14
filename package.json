@@ -44,6 +44,7 @@
     "lint": "tsc --noEmit",
     "start": "node dist/cli.js",
     "cli": "npm run build --silent && node dist/cli.js",
+    "setup": "npm install && npm run build && npm link && node dist/cli.js install && node dist/cli.js doctor",
     "local:install": "npm run build && node dist/cli.js install",
     "local:uninstall": "node dist/cli.js uninstall",
     "local:doctor": "node dist/cli.js doctor",

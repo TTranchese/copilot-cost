@@ -24,11 +24,10 @@ A zero-config **statusline + local dashboard** that turns Copilot CLI's OpenTele
 ```bash
 git clone https://github.com/devartifex/copilot-cost.git
 cd copilot-cost
-npm install
-npm run build
-npm link            # makes the `copilot-cost` command available on your PATH
-copilot-cost install
+npm run setup       # installs deps, builds, links the `copilot-cost` command, runs install + doctor
 ```
+
+> Prefer manual control? The equivalent steps are `npm install && npm run build && npm link && copilot-cost install`.
 
 Then **restart your shell and restart `copilot`**. That's it.
 
