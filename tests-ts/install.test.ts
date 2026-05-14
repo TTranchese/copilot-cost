@@ -4,12 +4,13 @@ import path from "node:path";
 
 const root = path.resolve(".test-home", "install-tests");
 const savedEnv = { ...process.env };
+const shimName = process.platform === "win32" ? "copilot-cost.cmd" : "copilot-cost";
 
-function resetHome(name: string): string {
+function resetHome(name: string, overrides: NodeJS.ProcessEnv = { SHELL: "/bin/zsh" }): string {
   vi.resetModules();
   const home = path.join(root, name);
   rmSync(home, { recursive: true, force: true });
-  process.env = { ...savedEnv, HOME: home, SHELL: "/bin/zsh", COPILOT_COST_REFRESH_DAYS: "999999" };
+  process.env = { ...savedEnv, HOME: home, COPILOT_COST_REFRESH_DAYS: "999999", ...overrides };
   return home;
 }
 
@@ -29,13 +30,13 @@ describe("install commands", () => {
     const { cmdInstall } = await import("../src/install.js");
     await expect(cmdInstall({ yes: true })).resolves.toBe(0);
 
-    const shim = path.join(home, ".copilot", "bin", "copilot-cost");
+    const shim = path.join(home, ".copilot", "bin", shimName);
     const otelDir = path.join(home, ".copilot", "otel");
     const settingsPath = path.join(home, ".copilot", "settings.json");
     const profilePath = path.join(home, ".zshrc");
     expect(existsSync(shim)).toBe(true);
     expect(existsSync(otelDir)).toBe(true);
-    expect(statSync(shim).mode & 0o111).not.toBe(0);
+    if (process.platform !== "win32") expect(statSync(shim).mode & 0o111).not.toBe(0);
     const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as { statusLine: { command: string } };
     expect(settings.statusLine.command).toBe(shim);
     expect(readFileSync(profilePath, "utf-8")).toContain("copilot-cost OTel exporter");
@@ -62,13 +63,26 @@ describe("install commands", () => {
     expect(output).not.toContain("Append OTel exporter settings");
   });
 
+  it("uses a PowerShell profile block on Windows when no POSIX shell is active", async () => {
+    if (process.platform !== "win32") return;
+    const home = resetHome("powershell-profile", {
+      SHELL: "",
+      PSModulePath: path.join(root, "powershell-profile", "Documents", "PowerShell", "Modules"),
+    });
+    const { cmdInstall } = await import("../src/install.js");
+    await expect(cmdInstall({ yes: true })).resolves.toBe(0);
+
+    const profilePath = path.join(home, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1");
+    expect(readFileSync(profilePath, "utf-8")).toContain("$env:COPILOT_OTEL_ENABLED = 'true'");
+  });
+
   it("uninstall reverses install", async () => {
     const home = resetHome("uninstall");
     const { cmdInstall, cmdUninstall } = await import("../src/install.js");
     await cmdInstall({ yes: true });
     await expect(cmdUninstall({ yes: true })).resolves.toBe(0);
 
-    const shim = path.join(home, ".copilot", "bin", "copilot-cost");
+    const shim = path.join(home, ".copilot", "bin", shimName);
     const settings = JSON.parse(readFileSync(path.join(home, ".copilot", "settings.json"), "utf-8")) as Record<string, unknown>;
     expect(existsSync(shim)).toBe(false);
     expect(settings.statusLine).toBeUndefined();

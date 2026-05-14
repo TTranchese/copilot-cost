@@ -20,12 +20,17 @@ export interface InstallPaths {
   shimPath: string;
   settingsPath: string;
   profilePath: string;
+  profileKind: "posix" | "powershell";
 }
 
 type JsonObject = Record<string, unknown>;
 
 function currentHome(): string {
   return process.env.HOME || homedir();
+}
+
+function isWindows(): boolean {
+  return process.platform === "win32";
 }
 
 function pricingCachePath(home = currentHome()): string {
@@ -44,14 +49,23 @@ export function resolveInstallPaths(env: NodeJS.ProcessEnv = process.env): Insta
   const home = env.HOME || homedir();
   const copilotDir = path.join(home, ".copilot");
   const shell = path.basename(env.SHELL || "");
+  const profileKind = !shell && isWindows() ? "powershell" : "posix";
+  const powerShellProfileDir =
+    env.PSModulePath?.split(path.delimiter)
+      .map((entry) => path.normalize(entry))
+      .find((entry) => path.basename(entry).toLowerCase() === "modules" && path.basename(path.dirname(entry)).toLowerCase() === "powershell");
   const profileName = shell.includes("zsh") ? ".zshrc" : shell.includes("bash") ? ".bashrc" : ".profile";
   return {
     home,
     copilotDir,
     binDir: path.join(copilotDir, "bin"),
-    shimPath: path.join(copilotDir, "bin", "copilot-cost"),
+    shimPath: path.join(copilotDir, "bin", isWindows() ? "copilot-cost.cmd" : "copilot-cost"),
     settingsPath: path.join(copilotDir, "settings.json"),
-    profilePath: path.join(home, profileName),
+    profilePath:
+      profileKind === "powershell"
+        ? path.join(powerShellProfileDir ? path.dirname(powerShellProfileDir) : path.join(home, "Documents", "PowerShell"), "Microsoft.PowerShell_profile.ps1")
+        : path.join(home, profileName),
+    profileKind,
   };
 }
 
@@ -63,14 +77,24 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-export function otelBlock(): string {
-  return [
-    OTEL_BEGIN,
-    "export COPILOT_OTEL_ENABLED=true",
-    "export COPILOT_OTEL_EXPORTER_TYPE=file",
-    'export COPILOT_OTEL_FILE_EXPORTER_PATH="$HOME/.copilot/otel/copilot-otel.jsonl"',
-    OTEL_END,
-  ].join("\n");
+export function otelBlock(profileKind: "posix" | "powershell" = resolveInstallPaths().profileKind): string {
+  const lines =
+    profileKind === "powershell"
+      ? [
+          OTEL_BEGIN,
+          "$env:COPILOT_OTEL_ENABLED = 'true'",
+          "$env:COPILOT_OTEL_EXPORTER_TYPE = 'file'",
+          "$env:COPILOT_OTEL_FILE_EXPORTER_PATH = Join-Path $HOME '.copilot/otel/copilot-otel.jsonl'",
+          OTEL_END,
+        ]
+      : [
+          OTEL_BEGIN,
+          "export COPILOT_OTEL_ENABLED=true",
+          "export COPILOT_OTEL_EXPORTER_TYPE=file",
+          'export COPILOT_OTEL_FILE_EXPORTER_PATH="$HOME/.copilot/otel/copilot-otel.jsonl"',
+          OTEL_END,
+        ];
+  return lines.join("\n");
 }
 
 function readJsonObject(filePath: string): JsonObject {
@@ -99,12 +123,12 @@ export function hasOtelBlock(profilePath: string): boolean {
   return existsSync(profilePath) && readFileSync(profilePath, "utf-8").includes(OTEL_BEGIN);
 }
 
-export function appendOtelExporterBlock(profilePath = resolveInstallPaths().profilePath): "appended" | "already-present" {
+export function appendOtelExporterBlock(profilePath = resolveInstallPaths().profilePath, profileKind = resolveInstallPaths().profileKind): "appended" | "already-present" {
   mkdirSync(path.dirname(profilePath), { recursive: true });
   const existing = existsSync(profilePath) ? readFileSync(profilePath, "utf-8") : "";
   if (existing.includes(OTEL_BEGIN)) return "already-present";
   const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
-  writeFileSync(profilePath, `${existing}${prefix}${otelBlock()}\n`, "utf-8");
+  writeFileSync(profilePath, `${existing}${prefix}${otelBlock(profileKind)}\n`, "utf-8");
   return "appended";
 }
 
@@ -120,9 +144,9 @@ export function removeOtelExporterBlock(profilePath = resolveInstallPaths().prof
 function writeShim(shimPath: string): void {
   mkdirSync(path.dirname(shimPath), { recursive: true });
   const target = cliPathFromInstallModule();
-  const body = `#!/bin/sh\nexec node ${shellQuote(target)} render "$@"\n`;
+  const body = isWindows() ? `@echo off\r\nnode "${target}" render %*\r\n` : `#!/bin/sh\nexec node ${shellQuote(target)} render "$@"\n`;
   writeFileSync(shimPath, body, "utf-8");
-  chmodSync(shimPath, 0o755);
+  if (!isWindows()) chmodSync(shimPath, 0o755);
 }
 
 function installSettings(settingsPath: string, shimPath: string): "updated" | "already-configured" {
@@ -148,9 +172,9 @@ export async function cmdInstall(opts: { yes?: boolean; otelProfile?: boolean } 
   let otelAction: "appended" | "already-present" | "skipped" = "skipped";
   const shouldOfferProfileEdit = opts.otelProfile !== false;
   if (!shouldOfferProfileEdit) {
-    console.log(`OTel profile edit skipped. Add this block to your shell profile to enable capture:\n${otelBlock()}`);
+    console.log(`OTel profile edit skipped. Add this block to your shell profile to enable capture:\n${otelBlock(paths.profileKind)}`);
   } else {
-    otelAction = appendOtelExporterBlock(paths.profilePath);
+    otelAction = appendOtelExporterBlock(paths.profilePath, paths.profileKind);
   }
 
   await refreshPricing({ force: false, dest: pricingCachePath(paths.home) });
@@ -250,7 +274,7 @@ export async function cmdDoctor(): Promise<number> {
     okLine("sample render", false, error instanceof Error ? error.message : String(error));
   }
 
-  const executable = existsSync(paths.shimPath) && (statSync(paths.shimPath).mode & 0o111) !== 0;
+  const executable = existsSync(paths.shimPath) && (isWindows() || (statSync(paths.shimPath).mode & 0o111) !== 0);
   if (!okLine("shim executable", executable, paths.shimPath)) failed = true;
   const dashboardDir = path.resolve(packageRoot(import.meta.url), "dashboard-ui", "dist");
   const missingDashboardFiles = ["index.html", "app.js", "styles.css"].filter((file) => !existsSync(path.join(dashboardDir, file)));
