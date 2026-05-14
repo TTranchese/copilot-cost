@@ -2,6 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from "no
 import path from "node:path";
 import process from "node:process";
 import { CACHE_PRICING, SNAPSHOT, type ModelPrice, type Pricing } from "./loader.js";
+import { parseDollar, splitLines, stripComment, unquote } from "./yaml-utils.js";
 
 export type PricingData = Pricing;
 
@@ -19,30 +20,12 @@ const VENDOR_ALIASES: Record<string, ModelPrice["vendor"]> = {
   github: "github",
 };
 
-function unquote(value: string): string {
-  const trimmed = value.trim();
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1);
-  }
-  return trimmed;
-}
-
 function normalizeModelName(raw: string): string {
   return unquote(raw)
     .replace(/\[\^[^\]]+\]/g, "")
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "-");
-}
-
-function parseDollar(raw: string | undefined): number {
-  if (raw == null) return 0;
-  const cleaned = unquote(raw).replace(/[$,]/g, "").trim();
-  const num = Number.parseFloat(cleaned);
-  return Number.isFinite(num) ? num : 0;
 }
 
 interface RawEntry {
@@ -56,12 +39,12 @@ interface RawEntry {
 }
 
 export function parsePricingYaml(text: string): PricingData {
-  const lines = text.split(/\r?\n/);
+  const lines = splitLines(text);
   const entries: RawEntry[] = [];
   let current: RawEntry | null = null;
 
   for (const raw of lines) {
-    const noComment = raw.split("#", 1)[0] ?? "";
+    const noComment = stripComment(raw);
     if (!noComment.trim()) continue;
     const dashMatch = /^(\s*)-\s+(.*)$/.exec(noComment);
     if (dashMatch) {

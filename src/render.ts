@@ -10,7 +10,8 @@ function asObject(value: unknown): JsonObject {
 
 function intValue(source: JsonObject, key: string): number {
   const value = source[key];
-  return Math.trunc(Number(value || 0));
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
 }
 
 function strValue(source: JsonObject, key: string): string | null {
@@ -26,7 +27,6 @@ function short(n: number): string {
 }
 
 export function renderPayload(payload: unknown, opts: { persist?: boolean } = {}): string {
-  void opts.persist;
   const root = asObject(payload);
   const modelInfo = asObject(root.model);
   const rawModel = typeof modelInfo.id === "string" ? modelInfo.id : modelInfo.id == null ? undefined : String(modelInfo.id);
@@ -37,7 +37,7 @@ export function renderPayload(payload: unknown, opts: { persist?: boolean } = {}
   const cacheWrite = intValue(cw, "total_cache_write_tokens");
 
   const sessionId = strValue(root, "session_id");
-  if (sessionId && !process.env.COPILOT_COST_NO_META) {
+  if (sessionId && opts.persist !== false && !process.env.COPILOT_COST_NO_META) {
     const { model: normModel } = getModelPrice(rawModel);
     appendSessionMeta({
       ts: new Date().toISOString(),

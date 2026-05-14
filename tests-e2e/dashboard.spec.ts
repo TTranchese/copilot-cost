@@ -75,7 +75,7 @@ test("renders live dashboard data and supports session drilldown", async ({ page
   await expect(page.locator("canvas#spend-chart, svg[aria-label='Stacked bar chart of spend by model']")).toBeVisible();
 
   await page.getByRole("link", { name: "Sessions" }).click();
-  await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Sessions" })).toBeVisible();
   await page.getByPlaceholder("Name, path, or model").fill("verify");
   await expect(page.getByText("Verify E2E test")).toBeVisible();
   await expect(page.getByText("Build dashboard e2e")).toHaveCount(0);

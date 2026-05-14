@@ -1,5 +1,33 @@
-import { describe, expect, it } from "vitest";
-import { computeCost, loadPricing, normalizeModel } from "../src/pricing/loader.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { clearPricingCache, computeCost, loadPricing, normalizeModel } from "../src/pricing/loader.js";
+
+const root = path.resolve(".test-work", "pricing-loader");
+const pricingFile = path.join(root, "pricing.yaml");
+
+function pricingYaml(input: number, extra = ""): string {
+  return `schema_version: 1
+fetched_at: "2025-01-01T00:00:00.000Z"
+models:
+  gpt-5-mini:
+    vendor: openai
+    input: ${input}
+    cached_input: 0.1
+    output: 2
+${extra}`;
+}
+
+beforeEach(() => {
+  clearPricingCache();
+  rmSync(root, { recursive: true, force: true });
+  mkdirSync(root, { recursive: true });
+});
+
+afterEach(() => {
+  clearPricingCache();
+  rmSync(root, { recursive: true, force: true });
+});
 
 describe("pricing loader", () => {
   it("loads the bundled snapshot with numeric prices", () => {
@@ -10,6 +38,38 @@ describe("pricing loader", () => {
     expect(typeof first?.input).toBe("number");
     expect(typeof first?.cached_input).toBe("number");
     expect(typeof first?.output).toBe("number");
+  });
+
+  it("memoizes pricing by path until the file changes", () => {
+    writeFileSync(pricingFile, pricingYaml(1), "utf-8");
+
+    const first = loadPricing(pricingFile);
+    const second = loadPricing(pricingFile);
+
+    expect(second).toBe(first);
+  });
+
+  it("invalidates memoized pricing when mtime or size changes", () => {
+    writeFileSync(pricingFile, pricingYaml(1), "utf-8");
+    const first = loadPricing(pricingFile);
+
+    writeFileSync(pricingFile, pricingYaml(3, "    cache_write: 4\n"), "utf-8");
+    const second = loadPricing(pricingFile);
+
+    expect(second).not.toBe(first);
+    expect(second.models["gpt-5-mini"]?.input).toBe(3);
+    expect(second.models["gpt-5-mini"]?.cache_write).toBe(4);
+  });
+
+  it("clearPricingCache forces pricing to be read again", () => {
+    writeFileSync(pricingFile, pricingYaml(1), "utf-8");
+    const first = loadPricing(pricingFile);
+
+    clearPricingCache();
+    const second = loadPricing(pricingFile);
+
+    expect(second).not.toBe(first);
+    expect(second.models["gpt-5-mini"]?.input).toBe(1);
   });
 
   it("normalizes internal and fast suffixes", () => {

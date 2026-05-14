@@ -141,8 +141,21 @@ function csvValue(value: unknown): string {
 }
 
 export function exportCsv(calls: NormalizedCall[]): string {
-  const headers = ["dedup_key", "session_id", "ts", "model", "input_tokens", "output_tokens", "cache_read", "cache_creation", "reasoning", "usd_cost", "duration_ms", "source"];
-  const lines = [headers.join(",")];
-  for (const call of calls) lines.push(headers.map((h) => csvValue((call as any)[h])).join(","));
+  const columns: { header: string; get: (call: NormalizedCall) => unknown }[] = [
+    { header: "dedup_key", get: (call) => call.dedup_key },
+    { header: "session_id", get: (call) => call.session_id },
+    { header: "ts", get: (call) => call.ts },
+    { header: "model", get: (call) => call.model },
+    { header: "input_tokens", get: (call) => call.input_tokens },
+    { header: "output_tokens", get: (call) => call.output_tokens },
+    { header: "cache_read", get: (call) => call.cache_read },
+    { header: "cache_creation", get: (call) => call.cache_creation },
+    { header: "reasoning", get: (call) => call.reasoning },
+    { header: "usd_cost", get: (call) => call.usd_cost },
+    { header: "duration_ms", get: (call) => call.duration_ms },
+    { header: "source", get: (call) => call.source },
+  ];
+  const lines = [columns.map((column) => column.header).join(",")];
+  for (const call of calls) lines.push(columns.map((column) => csvValue(column.get(call))).join(","));
   return `${lines.join("\n")}\n`;
 }

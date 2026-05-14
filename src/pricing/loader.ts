@@ -1,8 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
+import { parseScalar, splitLines, stripComment } from "./yaml-utils.js";
 
 export interface ModelPrice {
   vendor: string;
@@ -18,10 +19,8 @@ export interface Pricing {
   models: Record<string, ModelPrice>;
 }
 
-type YamlScalar = string | number | boolean | null;
 type RawPricing = Record<string, unknown> & { models?: Record<string, Record<string, unknown>> };
 
-const numRe = /^-?\d+(?:\.\d+)?$/;
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 function resolveSnapshot(): string {
@@ -36,6 +35,10 @@ export const CACHE_DIR = path.join(homedir(), ".copilot", "cost-cache");
 export const CACHE_PRICING = path.join(CACHE_DIR, "pricing.yaml");
 export const SNAPSHOT = resolveSnapshot();
 
+type PricingCacheEntry = { mtimeMs: number; size: number; pricing: Pricing };
+
+const pricingCache = new Map<string, PricingCacheEntry>();
+
 export function normalizeModel(modelId: string | undefined | null): string | null {
   if (!modelId) return null;
   let model = String(modelId).trim();
@@ -47,29 +50,14 @@ export function normalizeModel(modelId: string | undefined | null): string | nul
   return model;
 }
 
-function scalar(value: string): YamlScalar {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  if (["null", "Null", "NULL", "~"].includes(trimmed)) return null;
-  if (["true", "True"].includes(trimmed)) return true;
-  if (["false", "False"].includes(trimmed)) return false;
-  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-    return trimmed.slice(1, -1);
-  }
-  if (numRe.test(trimmed)) {
-    return trimmed.includes(".") ? Number.parseFloat(trimmed) : Number.parseInt(trimmed, 10);
-  }
-  return trimmed;
-}
-
 function parseYaml(text: string): RawPricing {
   const data: RawPricing = {};
   const models: Record<string, Record<string, unknown>> = {};
   let currentModel: string | null = null;
   let inModels = false;
 
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.split("#", 1)[0]?.trimEnd() ?? "";
+  for (const raw of splitLines(text)) {
+    const line = stripComment(raw).trimEnd();
     if (!line.trim()) continue;
     const indent = line.length - line.trimStart().length;
     const stripped = line.trim();
@@ -90,7 +78,7 @@ function parseYaml(text: string): RawPricing {
     if (indent === 0 && stripped.includes(":")) {
       const [rawKey, ...rest] = stripped.split(":");
       const key = rawKey?.trim();
-      if (key) data[key] = scalar(rest.join(":"));
+      if (key) data[key] = parseScalar(rest.join(":"));
       inModels = false;
       continue;
     }
@@ -104,7 +92,7 @@ function parseYaml(text: string): RawPricing {
     if (inModels && indent >= 4 && currentModel && stripped.includes(":")) {
       const [rawKey, ...rest] = stripped.split(":");
       const key = rawKey?.trim();
-      if (key) models[currentModel]![key] = scalar(rest.join(":"));
+      if (key) models[currentModel]![key] = parseScalar(rest.join(":"));
     }
   }
 
@@ -130,14 +118,26 @@ function coercePricing(raw: RawPricing): Pricing {
   };
 }
 
+export function clearPricingCache(): void {
+  pricingCache.clear();
+}
+
 export function loadPricing(pricingPath?: string): Pricing {
-  let chosen = pricingPath ?? process.env.COPILOT_COST_PRICING ?? CACHE_PRICING;
-  if (!existsSync(chosen)) chosen = SNAPSHOT;
-  const text = readFileSync(chosen, "utf-8");
-  if (path.extname(chosen).toLowerCase() === ".json") {
-    return coercePricing(JSON.parse(text) as RawPricing);
+  const requested = pricingPath ?? process.env.COPILOT_COST_PRICING ?? CACHE_PRICING;
+  const chosen = existsSync(requested) ? requested : SNAPSHOT;
+  const resolved = path.resolve(chosen);
+  const { mtimeMs, size } = statSync(resolved);
+  const cached = pricingCache.get(resolved);
+  if (cached && cached.mtimeMs === mtimeMs && cached.size === size) {
+    return cached.pricing;
   }
-  return coercePricing(parseYaml(text));
+
+  const text = readFileSync(resolved, "utf-8");
+  const pricing = path.extname(resolved).toLowerCase() === ".json"
+    ? coercePricing(JSON.parse(text) as RawPricing)
+    : coercePricing(parseYaml(text));
+  pricingCache.set(resolved, { mtimeMs, size, pricing });
+  return pricing;
 }
 
 export function getModelPrice(

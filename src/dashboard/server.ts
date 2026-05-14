@@ -1,7 +1,6 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import process from "node:process";
 import { loadPricing } from "../pricing/loader.js";
@@ -16,7 +15,6 @@ import { packageRoot } from "../util/package-root.js";
 type Range = "7d" | "30d" | "90d" | "all";
 type JsonValue = unknown;
 
-const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = packageRoot(import.meta.url);
 const uiDir = path.join(pkgRoot, "dashboard-ui", "dist");
 const packageJson = JSON.parse(readFileSync(path.join(pkgRoot, "package.json"), "utf-8")) as { version?: string };
@@ -27,7 +25,7 @@ function send(res: ServerResponse, status: number, body: string | Buffer, conten
 }
 
 function json(res: ServerResponse, status: number, value: JsonValue): void {
-  send(res, status, JSON.stringify(value), "application/json; no-store");
+  send(res, status, JSON.stringify(value), "application/json; charset=utf-8");
 }
 
 function serveFile(res: ServerResponse, fileName: string, contentType: string): void {
@@ -65,9 +63,36 @@ function health(): Record<string, unknown> {
   };
 }
 
-async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+function allowedLocalOrigins(port: number): Set<string> {
+  return new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`]);
+}
+
+function allowedLocalHosts(port: number): Set<string> {
+  return new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
+}
+
+function isMutatingMethod(method: string): boolean {
+  return method !== "GET" && method !== "HEAD";
+}
+
+function validateRequestHostAndOrigin(req: IncomingMessage, method: string, port: number | undefined): "forbidden host" | "forbidden origin" | null {
+  if (!port || !allowedLocalHosts(port).has((req.headers.host ?? "").toLowerCase())) {
+    return "forbidden host";
+  }
+  const origin = req.headers.origin;
+  if (isMutatingMethod(method) && origin !== undefined && !allowedLocalOrigins(port).has(origin.toLowerCase())) {
+    return "forbidden origin";
+  }
+  return null;
+}
+
+async function handle(req: IncomingMessage, res: ServerResponse, expectedPort: () => number | undefined): Promise<void> {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const method = req.method ?? "GET";
+  const forbidden = validateRequestHostAndOrigin(req, method, expectedPort() ?? req.socket.localPort);
+  if (forbidden) {
+    return json(res, 403, { error: forbidden });
+  }
   try {
     if (method === "GET" && url.pathname === "/") return serveFile(res, "index.html", "text/html; charset=utf-8");
     if (method === "GET" && url.pathname === "/styles.css") return serveFile(res, "styles.css", "text/css; charset=utf-8");
@@ -104,13 +129,20 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 }
 
-export function makeServer(host = "127.0.0.1", _port = 4567): http.Server {
+export type DashboardServer = http.Server & { setExpectedPort(port: number): void };
+
+export function makeServer(host = "127.0.0.1", port = 4567): DashboardServer {
   if (host !== "127.0.0.1" && host !== "localhost") {
     throw new Error("dashboard only supports local binds (127.0.0.1)");
   }
-  return http.createServer((req, res) => {
-    void handle(req, res);
-  });
+  let expectedPort = port === 0 ? undefined : port;
+  const server = http.createServer((req, res) => {
+    void handle(req, res, () => expectedPort);
+  }) as DashboardServer;
+  server.setExpectedPort = (actualPort: number): void => {
+    expectedPort = actualPort;
+  };
+  return server;
 }
 
 function openBrowser(url: string): void {
@@ -170,6 +202,7 @@ async function listenWithFallback(
 export async function run(host = "127.0.0.1", port = 4567): Promise<void> {
   const server = makeServer(host, port);
   const actualPort = await listenWithFallback(server, host, port, { allowFallback: true });
+  server.setExpectedPort(actualPort);
   console.log(`dashboard: http://${host}:${actualPort}/`);
 }
 
@@ -179,6 +212,7 @@ export async function cmdDashboard(opts: { port?: number; host?: string; noOpen?
   const explicitPort = opts.port !== undefined;
   const server = makeServer(host, requestedPort);
   const actualPort = await listenWithFallback(server, host, requestedPort, { allowFallback: !explicitPort });
+  server.setExpectedPort(actualPort);
   const url = `http://${host}:${actualPort}/`;
   console.log(`dashboard: ${url}`);
   if (!opts.noOpen) openBrowser(url);

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { clearCache, readAllCalls } from "../src/otel/reader.js";
 import { clearSessionMetaCache } from "../src/util/session-meta.js";
@@ -41,6 +41,24 @@ describe("OTel reader", () => {
     expect(calls.find((call) => call.dedup_key === "trace:a")?.input_tokens).toBe(20);
   });
 
+  it("reuses the enriched sorted list until an input file stat changes", () => {
+    const file = path.join(root, "a.jsonl");
+    writeFileSync(file, `${line("a")}\n`, "utf-8");
+
+    const first = readAllCalls();
+    const second = readAllCalls();
+    expect(second).toBe(first);
+    expect(second).toEqual(first);
+
+    const st = statSync(file);
+    const touched = new Date(st.mtimeMs + 2_000);
+    utimesSync(file, touched, touched);
+
+    const afterTouch = readAllCalls();
+    expect(afterTouch).not.toBe(first);
+    expect(afterTouch).toEqual(first);
+  });
+
   it("falls back to gen_ai.conversation.id for session_id and enriches from sidecar meta", () => {
     writeFileSync(path.join(root, "a.jsonl"), `${line("a", 10, 1_700_000_000)}\n`, "utf-8");
     const callIso = new Date(1_700_000_000_000).toISOString();
@@ -54,6 +72,24 @@ describe("OTel reader", () => {
     expect(call.session_id).toBe("sess-CLI-1");
     expect(call.session_name).toBe("My chat");
     expect(call.cwd).toBe("/Users/me/proj");
+  });
+
+  it("matches sidecar metadata with nearby binary-searched entries", () => {
+    writeFileSync(path.join(root, "a.jsonl"), `${line("a", 10, 1_700_000_000)}\n`, "utf-8");
+    const callTime = 1_700_000_000_000;
+    const meta = [
+      { ts: new Date(callTime - 31 * 60 * 1_000).toISOString(), session_id: "too-old", session_name: null, cwd: null, model: "gpt-5-mini" },
+      { ts: new Date(callTime - 2 * 60 * 1_000).toISOString(), session_id: "wrong-model", session_name: null, cwd: null, model: "claude-sonnet-4.5" },
+      { ts: new Date(callTime - 5 * 60 * 1_000).toISOString(), session_id: "expected", session_name: "Expected", cwd: "C:\\dev\\repo", model: "gpt-5-mini" },
+      { ts: new Date(callTime + 10 * 60 * 1_000).toISOString(), session_id: "later", session_name: null, cwd: null, model: "gpt-5-mini" },
+      { ts: new Date(callTime + 31 * 60 * 1_000).toISOString(), session_id: "too-new", session_name: null, cwd: null, model: "gpt-5-mini" },
+    ];
+    writeFileSync(path.join(root, "copilot-cost-meta.jsonl"), `${meta.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf-8");
+
+    const [call] = readAllCalls();
+    expect(call.session_id).toBe("expected");
+    expect(call.session_name).toBe("Expected");
+    expect(call.cwd).toBe("C:\\dev\\repo");
   });
 
   it("uses gen_ai.conversation.id when no sidecar metadata is available", () => {

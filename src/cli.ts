@@ -59,11 +59,23 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   try {
     await program.parseAsync(argv, { from: "user" });
   } catch (error) {
-    if (typeof error === "object" && error && "code" in error && (error as { code?: string }).code === "commander.helpDisplayed") {
-      return;
+    if (typeof error === "object" && error && "code" in error) {
+      const commanderError = error as { code?: string; exitCode?: number; message?: string };
+      const code = commanderError.code ?? "";
+      if (code === "commander.helpDisplayed" || code === "commander.help" || code === "commander.version") {
+        return;
+      }
+      if (code.startsWith("commander.")) {
+        exitWith(commanderError.exitCode ?? 1);
+        return;
+      }
     }
     throw error;
   }
 }
 
-void main();
+void main().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`copilot-cost: ${message}`);
+  process.exitCode = 1;
+});

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const root = path.resolve(".test-home", "install-tests");
@@ -12,6 +12,12 @@ function resetHome(name: string, overrides: NodeJS.ProcessEnv = { SHELL: "/bin/z
   rmSync(home, { recursive: true, force: true });
   process.env = { ...savedEnv, HOME: home, COPILOT_COST_REFRESH_DAYS: "999999", ...overrides };
   return home;
+}
+
+function profileBackups(profilePath: string): string[] {
+  const dir = path.dirname(profilePath);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((name) => name.startsWith(`${path.basename(profilePath)}.bak.`)).sort();
 }
 
 afterEach(() => {
@@ -50,6 +56,50 @@ describe("install commands", () => {
     const backups = readdirSync(path.dirname(settingsPath)).filter((name) => name.startsWith("settings.json.bak."));
     expect(backups).toHaveLength(0);
     expect(path.dirname(settingsPath)).toBe(path.join(home, ".copilot"));
+  });
+
+  it("backs up an existing shell profile before appending the OTel block", async () => {
+    const home = resetHome("append-profile-backup");
+    const profilePath = path.join(home, ".zshrc");
+    const original = "# existing profile\nexport FOO=bar\n";
+    mkdirSync(path.dirname(profilePath), { recursive: true });
+    writeFileSync(profilePath, original, "utf-8");
+    const { appendOtelExporterBlock } = await import("../src/install.js");
+
+    expect(appendOtelExporterBlock(profilePath, "posix")).toBe("appended");
+    const backups = profileBackups(profilePath);
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(path.join(path.dirname(profilePath), backups[0]!), "utf-8")).toBe(original);
+
+    expect(appendOtelExporterBlock(profilePath, "posix")).toBe("already-present");
+    expect(profileBackups(profilePath)).toHaveLength(1);
+  });
+
+  it("backs up a shell profile before removing the OTel block", async () => {
+    const home = resetHome("remove-profile-backup");
+    const profilePath = path.join(home, ".zshrc");
+    const { otelBlock, removeOtelExporterBlock } = await import("../src/install.js");
+    const original = `before\n${otelBlock("posix")}\nafter\n`;
+    mkdirSync(path.dirname(profilePath), { recursive: true });
+    writeFileSync(profilePath, original, "utf-8");
+
+    expect(removeOtelExporterBlock(profilePath)).toBe(true);
+    const backups = profileBackups(profilePath);
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(path.join(path.dirname(profilePath), backups[0]!), "utf-8")).toBe(original);
+
+    expect(removeOtelExporterBlock(profilePath)).toBe(false);
+    expect(profileBackups(profilePath)).toHaveLength(1);
+  });
+
+  it("does not create a profile backup when appending to a new profile", async () => {
+    const home = resetHome("append-new-profile-no-backup");
+    const profilePath = path.join(home, ".zshrc");
+    const { appendOtelExporterBlock } = await import("../src/install.js");
+
+    expect(appendOtelExporterBlock(profilePath, "posix")).toBe("appended");
+    expect(existsSync(profilePath)).toBe(true);
+    expect(profileBackups(profilePath)).toHaveLength(0);
   });
 
   it("default install configures OTel without prompting and keeps dashboard explicit", async () => {

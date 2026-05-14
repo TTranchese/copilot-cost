@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { resolveOtelFiles } from "./paths.js";
 import { type NormalizedCall, normalizeSpan } from "./parser.js";
-import { readSessionMeta, type SessionMetaEntry } from "../util/session-meta.js";
+import { metaFilePath, readSessionMeta, type SessionMetaEntry } from "../util/session-meta.js";
 
 export interface ReadOptions { since?: Date; until?: Date }
 
@@ -12,9 +12,26 @@ interface CacheEntry {
 }
 
 const cache = new Map<string, CacheEntry>();
+let enrichedCache: { fingerprint: string; calls: NormalizedCall[] } | null = null;
 
+// Clears both the per-file parse cache and the derived enriched/sorted cache so tests
+// and callers can reset all reader state with one function.
 export function clearCache(): void {
   cache.clear();
+  enrichedCache = null;
+}
+
+function fileFingerprint(file: string): string {
+  try {
+    const st = statSync(file);
+    return `${file}:${st.mtimeMs}:${st.size}`;
+  } catch {
+    return `${file}:0:0`;
+  }
+}
+
+function enrichedFingerprint(files: string[]): string {
+  return [...files, metaFilePath()].map(fileFingerprint).join("|");
 }
 
 function parseFile(file: string): NormalizedCall[] {
@@ -45,26 +62,48 @@ function parseFile(file: string): NormalizedCall[] {
 // symmetric window to tolerate either ordering and clock skew.
 const META_WINDOW_MS = 30 * 60 * 1000;
 
+function lowerBoundMeta(meta: SessionMetaEntry[], minTime: number): number {
+  let lo = 0;
+  let hi = meta.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const t = Date.parse(meta[mid]?.ts ?? "");
+    if (!Number.isFinite(t) || t < minTime) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 function findMeta(meta: SessionMetaEntry[], call: NormalizedCall): SessionMetaEntry | null {
   if (!meta.length) return null;
   const callTime = Date.parse(call.ts);
   if (!Number.isFinite(callTime)) return null;
+
+  const minTime = callTime - META_WINDOW_MS;
+  const maxTime = callTime + META_WINDOW_MS;
+  const start = lowerBoundMeta(meta, minTime);
   let best: SessionMetaEntry | null = null;
   let bestDelta = Number.POSITIVE_INFINITY;
-  for (const entry of meta) {
+
+  for (let i = start; i < meta.length; i += 1) {
+    const entry = meta[i];
+    if (!entry) continue;
     const t = Date.parse(entry.ts);
     if (!Number.isFinite(t)) continue;
+    if (t > maxTime) break;
     const delta = Math.abs(t - callTime);
-    if (delta > META_WINDOW_MS) continue;
     if (entry.model && entry.model !== call.model) continue;
     if (delta < bestDelta) { bestDelta = delta; best = entry; }
   }
   if (best) return best;
-  for (const entry of meta) {
+
+  for (let i = start; i < meta.length; i += 1) {
+    const entry = meta[i];
+    if (!entry) continue;
     const t = Date.parse(entry.ts);
     if (!Number.isFinite(t)) continue;
+    if (t > maxTime) break;
     const delta = Math.abs(t - callTime);
-    if (delta > META_WINDOW_MS) continue;
     if (delta < bestDelta) { bestDelta = delta; best = entry; }
   }
   return best;
@@ -82,22 +121,34 @@ function enrich(calls: NormalizedCall[]): NormalizedCall[] {
   });
 }
 
-export function readAllCalls(opts: ReadOptions = {}): NormalizedCall[] {
-  const seen = new Set<string>();
-  const out: NormalizedCall[] = [];
+function filterByTime(calls: NormalizedCall[], opts: ReadOptions): NormalizedCall[] {
   const since = opts.since?.getTime();
   const until = opts.until?.getTime();
+  if (since === undefined && until === undefined) return calls;
+  return calls.filter((call) => {
+    const t = Date.parse(call.ts);
+    if (since !== undefined && t < since) return false;
+    if (until !== undefined && t > until) return false;
+    return true;
+  });
+}
 
-  for (const file of resolveOtelFiles()) {
+export function readAllCalls(opts: ReadOptions = {}): NormalizedCall[] {
+  const files = resolveOtelFiles();
+  const fingerprint = enrichedFingerprint(files);
+  if (enrichedCache?.fingerprint === fingerprint) return filterByTime(enrichedCache.calls, opts);
+
+  const seen = new Set<string>();
+  const out: NormalizedCall[] = [];
+  for (const file of files) {
     for (const call of parseFile(file)) {
       if (seen.has(call.dedup_key)) continue;
-      const t = Date.parse(call.ts);
-      if (since !== undefined && t < since) continue;
-      if (until !== undefined && t > until) continue;
       seen.add(call.dedup_key);
       out.push(call);
     }
   }
-  const enriched = enrich(out);
-  return enriched.sort((a, b) => a.ts.localeCompare(b.ts));
+
+  const calls = enrich(out).sort((a, b) => a.ts.localeCompare(b.ts));
+  enrichedCache = { fingerprint, calls };
+  return filterByTime(calls, opts);
 }

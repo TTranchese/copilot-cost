@@ -2,9 +2,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, c
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import process from "node:process";
+import process, { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
-import { stdin as input, stdout as output } from "node:process";
 import { cacheIsFresh, refreshPricing } from "./pricing/fetcher.js";
 import { loadPricing } from "./pricing/loader.js";
 import { renderPayload } from "./render.js";
@@ -148,6 +147,12 @@ function timestamp(): string {
   return new Date().toISOString().replace(/\D/g, "");
 }
 
+function backupExistingNonEmpty(filePath: string): void {
+  if (existsSync(filePath) && statSync(filePath).size > 0) {
+    copyFileSync(filePath, `${filePath}.bak.${timestamp()}`);
+  }
+}
+
 async function confirm(question: string, yes?: boolean): Promise<boolean> {
   if (yes) return true;
   if (!process.stdin.isTTY) return false;
@@ -168,6 +173,7 @@ export function appendOtelExporterBlock(profilePath = resolveInstallPaths().prof
   mkdirSync(path.dirname(profilePath), { recursive: true });
   const existing = existsSync(profilePath) ? readFileSync(profilePath, "utf-8") : "";
   if (existing.includes(OTEL_BEGIN)) return "already-present";
+  backupExistingNonEmpty(profilePath);
   const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
   writeFileSync(profilePath, `${existing}${prefix}${otelBlock(profileKind)}\n`, "utf-8");
   return "appended";
@@ -178,6 +184,7 @@ export function removeOtelExporterBlock(profilePath = resolveInstallPaths().prof
   const existing = readFileSync(profilePath, "utf-8");
   const pattern = new RegExp(`\\n?${OTEL_BEGIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^]*?${OTEL_END.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n?`, "m");
   if (!pattern.test(existing)) return false;
+  backupExistingNonEmpty(profilePath);
   writeFileSync(profilePath, existing.replace(pattern, "\n").replace(/\n{3,}/g, "\n\n"), "utf-8");
   return true;
 }

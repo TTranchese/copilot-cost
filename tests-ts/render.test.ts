@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { renderPayload } from "../src/render.js";
 
@@ -28,6 +28,23 @@ describe("renderPayload", () => {
     const output = renderPayload(payload, { persist: false });
     expect(output).toContain("$");
     expect(output).toContain("38.2k in / 6.1k out");
+  });
+
+  it("does not write session metadata when persistence is disabled", () => {
+    process.env.COPILOT_COST_NO_COLOR = "1";
+    renderPayload(payload, { persist: false });
+    expect(existsSync(path.join(process.env.COPILOT_OTEL_DIR ?? "", "copilot-cost-meta.jsonl"))).toBe(false);
+  });
+
+  it("renders a numeric amount for non-numeric token counts", () => {
+    process.env.COPILOT_COST_NO_COLOR = "1";
+    const malformedPayload = JSON.parse(JSON.stringify(payload)) as { context_window: { total_input_tokens: string } };
+    malformedPayload.context_window.total_input_tokens = "not-a-number";
+
+    const output = renderPayload(malformedPayload, { persist: false });
+
+    expect(output).toMatch(/\$\d+\.\d{4}/);
+    expect(output).not.toContain("NaN");
   });
 
   it("renders compact format", () => {
