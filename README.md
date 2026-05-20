@@ -9,7 +9,7 @@
 
 > ⚠️ **Unofficial.** This is a community project and is **not affiliated with, endorsed by, or supported by GitHub**. It reads the OpenTelemetry traces the [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-copilot-cli) already emits — nothing more.
 
-A zero-config **statusline + local dashboard** that turns Copilot CLI's OpenTelemetry traces into a real-time, model-aware view of your **token usage and estimated spend** — without your data ever leaving your machine.
+A zero-config **statusline + local dashboard** that turns Copilot CLI's OpenTelemetry traces into a real-time, model-aware view of your **token usage and estimated GitHub AI Credits (AIC)** — without your data ever leaving your machine.
 
 ![copilot-cost statusline in the GitHub Copilot CLI](docs/ghcpcli.png)
 
@@ -49,9 +49,9 @@ Three styles, controlled by `COPILOT_COST_FORMAT`:
 
 | Format | Aliases | Example |
 | --- | --- | --- |
-| `standard` | _default_ | `$1.2522 · 1.5M in / 7.9k out · 1.5M cache` |
-| `compact` | `minimal` | `$1.2522` |
-| `full` | `verbose` | `$1.2522 (125.22 aic) · 38.4k fresh / 1.4M cache rd / 62.1k cache wr / 7.9k out · Σ 1.5M · 1.6k reason` |
+| `standard` | _default_ | `125.22 AIC · 1.5M in / 7.9k out · 1.5M cache` |
+| `compact` | `minimal` | `125.22 AIC` |
+| `full` | `verbose` | `125.22 AIC ($1.2522) · 38.4k fresh / 1.4M cache rd / 62.1k cache wr / 7.9k out · Σ 1.5M · 1.6k reason` |
 
 ```bash
 export COPILOT_COST_FORMAT=compact
@@ -110,7 +110,7 @@ GitHub Copilot CLI ──OTel spans (JSONL)──▶ ~/.copilot/otel/copilot-ote
    export COPILOT_OTEL_FILE_EXPORTER_PATH="$HOME/.copilot/otel/copilot-otel.jsonl"
    ```
 2. **Aggregate** — on every render, recent spans are read, `gen_ai.usage.*` counters and `gen_ai.request.model` are extracted, and rolled up by session / model / day.
-3. **Price** — token counts are multiplied by a bundled pricing snapshot (refreshable from [Copilot models & pricing](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing)) to produce an **estimated** USD cost.
+3. **Price** — token counts are multiplied by a bundled pricing snapshot (refreshable from [Copilot models & pricing](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing)) to produce **estimated** GitHub AI Credits (AIC). The `full` statusline also shows the equivalent USD conversion.
 4. **Render** — a one-line statusline, plus an optional local web dashboard.
 
 More on the underlying telemetry pipeline: [Copilot OpenTelemetry observability](https://docs.github.com/en/copilot/how-tos/copilot-sdk/observability/opentelemetry).

@@ -42,12 +42,24 @@ const pricingCache = new Map<string, PricingCacheEntry>();
 export function normalizeModel(modelId: string | undefined | null): string | null {
   if (!modelId) return null;
   let model = String(modelId).trim();
+  const parentheticalModel = /^auto\b.*\(([^)]+)\)/i.exec(model);
+  if (parentheticalModel?.[1]) {
+    model = parentheticalModel[1];
+  }
+  model = model
+    .replace(/\[\^[^\]]+\]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^a-z0-9.+-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
   for (const suffix of ["-1m-internal", "-fast"]) {
     if (model.endsWith(suffix)) {
       model = model.slice(0, -suffix.length);
     }
   }
-  return model;
+  return model || null;
 }
 
 function parseYaml(text: string): RawPricing {

@@ -14,6 +14,13 @@ function intValue(source: JsonObject, key: string): number {
   return Number.isFinite(n) ? Math.trunc(n) : 0;
 }
 
+function numValue(source: JsonObject, key: string): number | null {
+  const value = source[key];
+  if (value === undefined || value === null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 function strValue(source: JsonObject, key: string): string | null {
   const value = source[key];
   if (value === undefined || value === null || value === "") return null;
@@ -26,10 +33,57 @@ function short(n: number): string {
   return String(n);
 }
 
+function firstNumber(source: JsonObject, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = numValue(source, key);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+function payloadAic(root: JsonObject): number | null {
+  const cost = asObject(root.cost);
+  return firstNumber(cost, [
+    "total_ai_credits",
+    "total_aic",
+    "ai_credits",
+    "aic",
+    "total_cost_ai_credits",
+  ]) ?? firstNumber(root, [
+    "total_ai_credits",
+    "total_aic",
+    "ai_credits",
+    "aic",
+  ]);
+}
+
+function formatAic(aic: number | null, model: string | null): string {
+  if (aic !== null) return `${aic.toFixed(2)} AIC`;
+  return model ? `? AIC (${model})` : "? AIC";
+}
+
+function modelCandidates(root: JsonObject): string[] {
+  const modelInfo = asObject(root.model);
+  const values = [
+    strValue(modelInfo, "id"),
+    strValue(modelInfo, "resolved_id"),
+    strValue(modelInfo, "selected_id"),
+    strValue(modelInfo, "selected_model"),
+    strValue(modelInfo, "display_name"),
+    strValue(modelInfo, "name"),
+    strValue(root, "model_id"),
+    strValue(root, "resolved_model"),
+    strValue(root, "selected_model"),
+  ];
+  return [...new Set(values.filter((value): value is string => value !== null))];
+}
+
 export function renderPayload(payload: unknown, opts: { persist?: boolean } = {}): string {
   const root = asObject(payload);
-  const modelInfo = asObject(root.model);
-  const rawModel = typeof modelInfo.id === "string" ? modelInfo.id : modelInfo.id == null ? undefined : String(modelInfo.id);
+  const candidates = modelCandidates(root);
+  const fallbackModel = candidates[0];
+  const pricedModel = candidates.map((candidate) => ({ raw: candidate, ...getModelPrice(candidate) })).find((candidate) => candidate.price);
+  const rawModel = pricedModel?.raw ?? fallbackModel;
   const cw = asObject(root.context_window);
   const totalInput = intValue(cw, "total_input_tokens");
   const output = intValue(cw, "total_output_tokens");
@@ -54,32 +108,35 @@ export function renderPayload(payload: unknown, opts: { persist?: boolean } = {}
     return "";
   }
 
-  const { model, price } = getModelPrice(rawModel);
-  let usd = 0;
+  const { price } = pricedModel ?? getModelPrice(rawModel);
+  let usd: number | null = 0;
   if (price) {
     usd = computeCost({ input: totalInput, cache_read: cacheRead, cache_write: cacheWrite, output }, price);
   } else if (!isEmpty) {
-    const shown = normalizeModel(rawModel) ?? "unknown";
-    return `$? (${shown})`;
+    usd = null;
   }
+  const explicitAic = payloadAic(root);
+  const aic = explicitAic ?? (usd === null ? null : usd * 100);
   const fmt = process.env.COPILOT_COST_FORMAT ?? "standard";
   const reasoning = intValue(cw, "total_reasoning_tokens");
   const fresh = Math.max(totalInput - cacheRead - cacheWrite, 0);
+  const shownModel = normalizeModel(rawModel) ?? (rawModel ? String(rawModel).trim() : null);
+  const aicText = formatAic(aic, usd === null ? shownModel : null);
+  const displayUsd = explicitAic === null ? usd : explicitAic / 100;
 
   let body: string;
   if (fmt === "compact" || fmt === "minimal") {
-    body = `$${usd.toFixed(4)}`;
+    body = aicText;
   } else if (fmt === "full" || fmt === "verbose") {
-    const credits = usd * 100;
     const parts = [
-      `$${usd.toFixed(4)} (${credits.toFixed(2)} aic)`,
+      displayUsd === null ? aicText : `${aicText} ($${displayUsd.toFixed(4)})`,
       `${short(fresh)} fresh / ${short(cacheRead)} cache rd / ${short(cacheWrite)} cache wr / ${short(output)} out`,
       `Σ ${short(totalInput + output)}`,
     ];
     if (reasoning) parts.push(`${short(reasoning)} reason`);
     body = parts.join(" · ");
   } else {
-    const parts = [`$${usd.toFixed(4)}`, `${short(totalInput)} in / ${short(output)} out`];
+    const parts = [aicText, `${short(totalInput)} in / ${short(output)} out`];
     if (cacheRead || cacheWrite) parts.push(`${short(cacheRead + cacheWrite)} cache`);
     body = parts.join(" · ");
   }

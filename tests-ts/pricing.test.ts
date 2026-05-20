@@ -77,6 +77,12 @@ describe("pricing loader", () => {
     expect(normalizeModel("gpt-5-mini-fast")).toBe("gpt-5-mini");
   });
 
+  it("normalizes display names and auto labels", () => {
+    expect(normalizeModel("Claude Opus 4.7")).toBe("claude-opus-4.7");
+    expect(normalizeModel("GPT-5 mini")).toBe("gpt-5-mini");
+    expect(normalizeModel("Auto (Claude Sonnet 4.6)")).toBe("claude-sonnet-4.6");
+  });
+
   it("computes cost using fresh, cache read, cache write, and output tokens", () => {
     const price = { vendor: "anthropic", input: 5, cached_input: 0.5, cache_write: 6.25, output: 25 };
     const cost = computeCost({ input: 38_200, cache_read: 12_000, cache_write: 3_100, output: 6_100 }, price);

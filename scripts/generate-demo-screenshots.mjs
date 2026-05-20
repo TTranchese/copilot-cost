@@ -102,9 +102,9 @@ function writeFixture() {
   const lines = syntheticSpans().map((span) => JSON.stringify(span));
   writeFileSync(fixturePath, `${lines.join("\n")}\n`);
   writeFileSync(statuslinePath, [
-    "standard: $1.2522 · 1.5M in / 7.9k out · 1.5M cache",
-    "compact:  $1.2522",
-    "full:     $1.2522 (125.22 aic) · 38.4k fresh / 1.4M cache rd / 62.1k cache wr / 7.9k out · Σ 1.5M · 1.6k reason",
+    "standard: 125.22 AIC · 1.5M in / 7.9k out · 1.5M cache",
+    "compact:  125.22 AIC",
+    "full:     125.22 AIC ($1.2522) · 38.4k fresh / 1.4M cache rd / 62.1k cache wr / 7.9k out · Σ 1.5M · 1.6k reason",
     "",
   ].join("\n"));
 }
