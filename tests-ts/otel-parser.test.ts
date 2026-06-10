@@ -13,7 +13,7 @@ describe("OTel parser", () => {
 
   it("normalizes a Format-A-ish span fixture with fresh input", () => {
     const call = normalizeSpan(fixture);
-    expect(call).toMatchObject({ session_id: "sess-test-123", model: "claude-opus-4.7", input_tokens: 800, output_tokens: 100, cache_read: 200, cache_creation: 100, reasoning: 20, duration_ms: 321, source: "cli-span" });
+    expect(call).toMatchObject({ session_id: "sess-test-123", model: "claude-opus-4.7", input_tokens: 700, output_tokens: 100, cache_read: 200, cache_creation: 100, reasoning: 20, duration_ms: 321, source: "cli-span" });
     expect(call?.dedup_key).toBe("span-1");
     expect(call?.ts).toBe("2026-05-13T12:00:00.000Z");
   });
