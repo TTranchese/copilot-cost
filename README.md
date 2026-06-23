@@ -74,6 +74,7 @@ Other knobs:
 - `COPILOT_COST_NO_COLOR=1` (or `NO_COLOR=1`) — plain output.
 - `COPILOT_COST_COLOR=<ansi-code>` — change the statusline color.
 - `COPILOT_COST_HIDE_ZERO=1` — hide the zeroed placeholder shown before the first response.
+- `COPILOT_COST_EUR_RATE=<rate>` — override the local USD→EUR dashboard conversion snapshot when you want a different exchange rate.
 
 ---
 
@@ -83,7 +84,7 @@ Other knobs:
 copilot-cost dashboard
 ```
 
-Binds to `127.0.0.1` by default and shows lifetime / today / week / month totals, token & cost trends, per-session and per-model breakdowns, pricing status, setup health, and CSV export.
+Binds to `127.0.0.1` by default and shows lifetime / today / week / month totals, token & cost trends, per-session and per-model breakdowns, pricing status, setup health, and CSV export. Dashboard costs are shown in EUR with the original USD estimate alongside them, using a local USD→EUR snapshot that you can override with `COPILOT_COST_EUR_RATE`.
 
 |  ☀️ Light  |  🌙 Dark  |
 | :---: | :---: |

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { DEFAULT_USD_TO_EUR_AS_OF, DEFAULT_USD_TO_EUR_RATE, eurSnapshot, usdToEur } from "../src/pricing/currency.js";
 import { clearPricingCache, computeCost, loadPricing, normalizeModel } from "../src/pricing/loader.js";
 
 const root = path.resolve(".test-work", "pricing-loader");
@@ -87,5 +88,31 @@ describe("pricing loader", () => {
     const price = { vendor: "anthropic", input: 5, cached_input: 0.5, cache_write: 6.25, output: 25 };
     const cost = computeCost({ input: 38_200, cache_read: 12_000, cache_write: 3_100, output: 6_100 }, price);
     expect(cost).toBeCloseTo(0.293375, 9);
+  });
+
+  it("exposes the default EUR conversion snapshot", () => {
+    expect(eurSnapshot()).toMatchObject({
+      base_currency: "USD",
+      quote_currency: "EUR",
+      as_of: DEFAULT_USD_TO_EUR_AS_OF,
+    });
+    expect(eurSnapshot().rate).toBeCloseTo(DEFAULT_USD_TO_EUR_RATE, 12);
+  });
+
+  it("allows overriding the EUR conversion rate via environment variables", () => {
+    const snapshot = eurSnapshot({
+      ...process.env,
+      COPILOT_COST_EUR_RATE: "0.91",
+      COPILOT_COST_EUR_RATE_AS_OF: "2026-06-24",
+      COPILOT_COST_EUR_RATE_SOURCE: "manual override",
+    });
+    expect(snapshot).toEqual({
+      base_currency: "USD",
+      quote_currency: "EUR",
+      rate: 0.91,
+      as_of: "2026-06-24",
+      source: "manual override",
+    });
+    expect(usdToEur(2, { COPILOT_COST_EUR_RATE: "0.91" })).toBeCloseTo(1.82, 12);
   });
 });

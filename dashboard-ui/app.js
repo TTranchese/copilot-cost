@@ -26,12 +26,20 @@ const navItems = [
 ];
 
 const palette = ["#2563eb", "#16a34a", "#9333ea", "#ea580c", "#0891b2", "#db2777", "#65a30d", "#7c3aed"];
+const FALLBACK_CURRENCY = {
+  base_currency: "USD",
+  quote_currency: "EUR",
+  rate: 1 / 1.1392,
+  as_of: "2026-06-23",
+  source: "ECB euro reference rate",
+};
 const state = {
   range: "30d",
   useMock: new URLSearchParams(location.search).get("mock") === "1",
   screenshot: new URLSearchParams(location.search).get("screenshot") === "1",
   cache: new Map(),
   chart: null,
+  currency: FALLBACK_CURRENCY,
   sort: { key: "last_seen_at", dir: "desc" },
 };
 
@@ -41,15 +49,49 @@ const sidebar = document.querySelector("#sidebar");
 const sidebarBackdrop = document.querySelector("#sidebar-backdrop");
 const drawerRoot = document.querySelector("#drawer-root");
 
-const fmtMoney = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 4, maximumFractionDigits: 4 });
+const fmtUsd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 4, maximumFractionDigits: 4 });
+const fmtEur = new Intl.NumberFormat("en-US", { style: "currency", currency: "EUR", minimumFractionDigits: 4, maximumFractionDigits: 4 });
 const fmtTok = new Intl.NumberFormat("en-US");
 const fmtPct = new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 });
-const money = (n) => fmtMoney.format(Number(n || 0));
+const fmtRate = new Intl.NumberFormat("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
 const tok = (n) => fmtTok.format(Math.round(Number(n || 0)));
 const pct = (n) => fmtPct.format(Number(n || 0));
 const oneM = (n) => Number(n || 0) / 1_000_000;
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[ch]));
 const routeName = () => (location.hash.replace(/^#\/?/, "") || "overview").split("?")[0];
+
+function currencySnapshot() {
+  return state.currency || FALLBACK_CURRENCY;
+}
+
+function usdValue(n) {
+  return Number(n || 0);
+}
+
+function eurValue(n) {
+  return usdValue(n) * Number(currencySnapshot().rate || 0);
+}
+
+function usdMoney(n) {
+  return fmtUsd.format(usdValue(n));
+}
+
+function eurMoney(n) {
+  return fmtEur.format(eurValue(n));
+}
+
+function moneyText(n) {
+  return `${eurMoney(n)} (${usdMoney(n)})`;
+}
+
+function moneyInline(n) {
+  return `<span class="whitespace-nowrap">${escapeHtml(eurMoney(n))}</span><span class="ml-1 whitespace-nowrap text-xs text-muted-foreground">(${escapeHtml(usdMoney(n))})</span>`;
+}
+
+function currencyNoteText() {
+  const currency = currencySnapshot();
+  return `1 USD = ${fmtRate.format(currency.rate)} EUR · ${currency.source} · ${currency.as_of}`;
+}
 
 async function api(path, options = {}) {
   if (state.useMock) return mockApi(path, options);
@@ -104,6 +146,7 @@ async function loadRoute() {
   closeMobileNav();
   try {
     const health = await api("/api/health");
+    state.currency = health.currency || state.currency;
     if (id !== "settings" && (!health.otel_enabled || Number(health.jsonl_files || 0) === 0)) {
       renderOnboarding(health);
       return;
@@ -138,7 +181,7 @@ async function renderOverview() {
     <section class="mt-6 grid gap-4 xl:grid-cols-[1.7fr_1fr]">
       <div class="surface p-5">
         <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div><h2 class="text-base font-semibold">Spend by model</h2><p class="text-sm text-muted-foreground">Stacked daily usage for the selected range.</p></div>
+          <div><h2 class="text-base font-semibold">Spend by model</h2><p class="text-sm text-muted-foreground">Stacked daily usage for the selected range, shown in EUR with USD reference.</p></div>
           <div class="flex flex-wrap gap-2">${topModels.map((m) => `<span class="pill"><span class="h-2 w-2 rounded-full" style="background:${modelColor(m.model)}"></span>${escapeHtml(shortModel(m.model))}</span>`).join("")}</div>
         </div>
         <div class="h-[320px]"><canvas id="spend-chart" aria-label="Stacked bar chart of spend by model" role="img"></canvas></div>
@@ -161,7 +204,7 @@ function kpiCard(label, period = {}, delta) {
   const deltaText = delta ? `${delta.value >= 0 ? "▲" : "▼"} ${pct(Math.abs(delta.value))} vs previous` : "All recorded local usage";
   return `<article class="kpi-card">
     <div class="flex items-center justify-between gap-3"><h2 class="text-sm font-medium text-muted-foreground">${label}</h2><span class="pill">${tok(period.premium_requests)} req</span></div>
-    <p class="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">${money(period.usd_cost)}</p>
+    <p class="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">${moneyInline(period.usd_cost)}</p>
     <p class="mt-3 text-sm text-muted-foreground"><span class="${deltaClass}">${deltaText}</span></p>
     <dl class="mt-4 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
       <div><dt>Input</dt><dd class="mt-1 font-medium text-foreground">${tok(period.input_tokens)}</dd></div>
@@ -206,7 +249,7 @@ function sessionsTable(rows, sortable = false) {
     <tbody>${rows.map((s) => `<tr class="cursor-pointer transition-colors hover:bg-muted/60" tabindex="0" role="button" data-session-id="${escapeHtml(s.id)}" aria-label="Open ${escapeHtml(s.session_name || s.id)} details">
       <td class="min-w-64"><div class="font-medium">${escapeHtml(s.session_name || s.id)}</div><div class="max-w-md truncate text-xs text-muted-foreground">${escapeHtml(s.cwd || "Unknown path")}</div></td>
       <td><span class="pill"><span class="h-2 w-2 rounded-full" style="background:${modelColor(s.model || s.first_model)}"></span>${escapeHtml(shortModel(s.model || s.first_model || "unknown"))}</span></td>
-      <td class="font-medium">${money(s.usd_cost)}</td>
+      <td class="font-medium">${moneyInline(s.usd_cost)}</td>
       <td>${tok(Number(s.total_input_tokens || 0) + Number(s.total_output_tokens || 0) + Number(s.total_cache_read_tokens || 0) + Number(s.total_cache_write_tokens || 0))}</td>
       <td>${sparkline(sessionPoints(s))}</td>
       <td class="whitespace-nowrap text-muted-foreground">${formatDate(s.last_seen_at)}</td>
@@ -219,11 +262,11 @@ async function renderModels() {
   const total = Number(summary.lifetime?.usd_cost || models.reduce((sum, m) => sum + Number(m.usd_cost || 0), 0));
   page.innerHTML = `<section class="surface overflow-hidden">
     <div class="p-5"><h2 class="text-base font-semibold">Model leaderboard</h2><p class="text-sm text-muted-foreground">Cost, token efficiency, cache behavior, and session volume.</p></div>
-    <div class="overflow-x-auto"><table class="table"><thead><tr><th>Model</th><th>Cost</th><th>Share</th><th>$/1M tokens</th><th>Cache hit</th><th>Sessions</th></tr></thead><tbody>
+    <div class="overflow-x-auto"><table class="table"><thead><tr><th>Model</th><th>Cost</th><th>Share</th><th>Cost / 1M tokens</th><th>Cache hit</th><th>Sessions</th></tr></thead><tbody>
       ${models.sort((a, b) => Number(b.usd_cost || 0) - Number(a.usd_cost || 0)).map((m) => {
         const volume = Number(m.token_volume || 0);
         const share = total ? Number(m.usd_cost || 0) / total : 0;
-        return `<tr><td class="font-medium"><span class="mr-2 inline-block h-2.5 w-2.5 rounded-full" style="background:${modelColor(m.model)}"></span>${escapeHtml(m.model)}</td><td>${money(m.usd_cost)}</td><td class="min-w-48"><div class="h-2 rounded-full bg-muted"><div class="h-2 rounded-full" style="width:${Math.min(100, share * 100)}%; background:${modelColor(m.model)}"></div></div><span class="mt-1 block text-xs text-muted-foreground">${pct(share)}</span></td><td>${volume ? money(Number(m.usd_cost || 0) / oneM(volume)) : "—"}</td><td>${pct(m.cache_hit_ratio)}</td><td>${tok(m.sessions)}</td></tr>`;
+        return `<tr><td class="font-medium"><span class="mr-2 inline-block h-2.5 w-2.5 rounded-full" style="background:${modelColor(m.model)}"></span>${escapeHtml(m.model)}</td><td>${moneyInline(m.usd_cost)}</td><td class="min-w-48"><div class="h-2 rounded-full bg-muted"><div class="h-2 rounded-full" style="width:${Math.min(100, share * 100)}%; background:${modelColor(m.model)}"></div></div><span class="mt-1 block text-xs text-muted-foreground">${pct(share)}</span></td><td>${volume ? moneyInline(Number(m.usd_cost || 0) / oneM(volume)) : "—"}</td><td>${pct(m.cache_hit_ratio)}</td><td>${tok(m.sessions)}</td></tr>`;
       }).join("") || `<tr><td colspan="6">${emptyInline("No model data yet.")}</td></tr>`}
     </tbody></table></div>
   </section>`;
@@ -231,13 +274,14 @@ async function renderModels() {
 
 async function renderPricing() {
   const pricing = await api("/api/pricing");
+  state.currency = pricing.currency || state.currency;
   const models = Object.entries(pricing.models || {});
   page.innerHTML = `<section class="surface overflow-hidden">
     <div class="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
-      <div><h2 class="text-base font-semibold">Pricing catalog</h2><p class="text-sm text-muted-foreground">Fetched ${escapeHtml(formatDate(pricing.fetched_at) || "unknown")} · schema ${escapeHtml(pricing.schema_version || "n/a")}</p></div>
+      <div><h2 class="text-base font-semibold">Pricing catalog</h2><p class="text-sm text-muted-foreground">Fetched ${escapeHtml(formatDate(pricing.fetched_at) || "unknown")} · schema ${escapeHtml(pricing.schema_version || "n/a")} · ${escapeHtml(currencyNoteText())}</p></div>
       <button id="refresh-pricing" class="btn" type="button">Refresh pricing</button>
     </div>
-    <div class="overflow-x-auto"><table class="table"><thead><tr><th>Model</th><th>Input</th><th>Output</th><th>Cache read</th><th>Cache write</th><th>Premium</th></tr></thead><tbody>
+    <div class="overflow-x-auto"><table class="table"><thead><tr><th>Model</th><th>Input / 1M</th><th>Output / 1M</th><th>Cache read / 1M</th><th>Cache write / 1M</th><th>Premium</th></tr></thead><tbody>
       ${models.map(([model, row]) => `<tr><td class="font-medium">${escapeHtml(model)}</td><td>${pricingValue(row, ["input"])}</td><td>${pricingValue(row, ["output"])}</td><td>${pricingValue(row, ["cached_input"])}</td><td>${pricingValue(row, ["cache_write"])}</td><td>—</td></tr>`).join("") || `<tr><td colspan="6">${emptyInline("Pricing data is not available yet.")}</td></tr>`}
     </tbody></table></div>
   </section>`;
@@ -257,6 +301,8 @@ async function renderSettings(health) {
       ${settingRow("OTel directory", health.otel_dir || "Not resolved")}
       ${settingRow("JSONL files", tok(health.jsonl_files || 0), Number(health.jsonl_files || 0) > 0)}
       ${settingRow("Statusline", health.ok ? "Reachable" : "Needs attention", health.ok)}
+      ${settingRow("EUR rate", `${fmtRate.format(currencySnapshot().rate)} (${currencySnapshot().as_of})`)}
+      ${settingRow("EUR source", currencySnapshot().source)}
       ${settingRow("Data source", state.useMock ? "Mock data mode" : "Local API")}
     </dl></section>
     <section class="surface p-5"><h2 class="text-base font-semibold">Enable telemetry</h2><p class="mt-2 text-sm text-muted-foreground">This dashboard reads local OpenTelemetry traces only. No usage data is sent by the UI.</p><pre class="mt-4 overflow-x-auto rounded-lg border border-border bg-muted p-3 text-sm"><code>npx copilot-cost install</code></pre><button id="enable-otel" class="btn mt-4" type="button">Enable OTel</button></section>
@@ -264,6 +310,7 @@ async function renderSettings(health) {
       ${envCard("COPILOT_OTEL_ENABLED", "Enables Copilot CLI OpenTelemetry export.")}
       ${envCard("COPILOT_OTEL_EXPORTER_TYPE", "Set to file for local JSONL traces.")}
       ${envCard("COPILOT_OTEL_FILE_EXPORTER_PATH", "Local JSONL trace file read by the dashboard.")}
+      ${envCard("COPILOT_COST_EUR_RATE", "Optional local USD→EUR override used by the dashboard conversion.")}
     </div><a class="btn-ghost mt-4" href="../README.md">Open README</a></section>
   </div>`;
   document.querySelector("#enable-otel").addEventListener("click", installOtel);
@@ -354,13 +401,13 @@ function drawerContent(session, details) {
     <button class="btn-ghost px-2" type="button" aria-label="Close details" data-close-drawer>✕</button>
   </div>
   <div class="mt-6 grid gap-3 sm:grid-cols-4">
-    ${miniStat("Cost", money(session.usd_cost))}${miniStat("Model", shortModel(session.model || session.first_model))}${miniStat("Tokens", tok(totalTokens))}${miniStat("Duration", `${tok(session.api_duration_ms || 0)} ms`)}
+    ${miniStat("Cost", moneyInline(session.usd_cost), { html: true })}${miniStat("Model", shortModel(session.model || session.first_model))}${miniStat("Tokens", tok(totalTokens))}${miniStat("Duration", `${tok(session.api_duration_ms || 0)} ms`)}
   </div>
   <div class="mt-3 grid gap-3 sm:grid-cols-4">
     ${miniStat("Started", formatDate(session.started_at))}${miniStat("Last seen", formatDate(session.last_seen_at))}${miniStat("Requests", tok(session.premium_requests || calls.length))}${miniStat("Cache tokens", tok(totalCache))}
   </div>
   <section class="mt-6"><h3 class="text-sm font-semibold">LLM calls</h3><div class="mt-3 overflow-x-auto"><table class="table"><thead><tr><th>Time</th><th>Model</th><th>Cost</th><th>Fresh Input</th><th>Cache Read</th><th>Cache Write</th><th>Output</th><th>Duration</th></tr></thead><tbody>
-    ${calls.map((call) => `<tr><td class="whitespace-nowrap text-muted-foreground">${formatDate(call.ts || call.started_at || call.timestamp || call.time)}</td><td>${escapeHtml(call.model || session.model || "unknown")}</td><td>${money(call.usd_cost)}</td><td>${tok(call.input_tokens)}</td><td>${tok(call.cache_read || 0)}</td><td>${tok(call.cache_creation || 0)}</td><td>${tok(call.output_tokens)}</td><td>${tok(call.duration_ms || call.api_duration_ms || 0)} ms</td></tr>`).join("") || `<tr><td colspan="8">${emptyInline("No per-call records were returned for this session.")}</td></tr>`}
+    ${calls.map((call) => `<tr><td class="whitespace-nowrap text-muted-foreground">${formatDate(call.ts || call.started_at || call.timestamp || call.time)}</td><td>${escapeHtml(call.model || session.model || "unknown")}</td><td>${moneyInline(call.usd_cost)}</td><td>${tok(call.input_tokens)}</td><td>${tok(call.cache_read || 0)}</td><td>${tok(call.cache_creation || 0)}</td><td>${tok(call.output_tokens)}</td><td>${tok(call.duration_ms || call.api_duration_ms || 0)} ms</td></tr>`).join("") || `<tr><td colspan="8">${emptyInline("No per-call records were returned for this session.")}</td></tr>`}
   </tbody></table></div></section>`;
 }
 
@@ -400,7 +447,7 @@ function emptyInline(message) {
 
 function modelPillRow(model, totalCost) {
   const share = totalCost ? Number(model.usd_cost || 0) / Number(totalCost || 1) : 0;
-  return `<div class="rounded-lg border border-border p-3"><div class="flex items-center justify-between gap-3"><span class="font-medium"><span class="mr-2 inline-block h-2.5 w-2.5 rounded-full" style="background:${modelColor(model.model)}"></span>${escapeHtml(shortModel(model.model))}</span><span>${money(model.usd_cost)}</span></div><div class="mt-2 h-1.5 rounded-full bg-muted"><div class="h-1.5 rounded-full" style="width:${Math.min(100, share * 100)}%; background:${modelColor(model.model)}"></div></div><p class="mt-2 text-xs text-muted-foreground">${tok(model.token_volume)} tokens · ${pct(model.cache_hit_ratio)} cache hit</p></div>`;
+  return `<div class="rounded-lg border border-border p-3"><div class="flex items-center justify-between gap-3"><span class="font-medium"><span class="mr-2 inline-block h-2.5 w-2.5 rounded-full" style="background:${modelColor(model.model)}"></span>${escapeHtml(shortModel(model.model))}</span><span>${moneyInline(model.usd_cost)}</span></div><div class="mt-2 h-1.5 rounded-full bg-muted"><div class="h-1.5 rounded-full" style="width:${Math.min(100, share * 100)}%; background:${modelColor(model.model)}"></div></div><p class="mt-2 text-xs text-muted-foreground">${tok(model.token_volume)} tokens · ${pct(model.cache_hit_ratio)} cache hit</p></div>`;
 }
 
 function settingRow(label, value, good) {
@@ -412,14 +459,14 @@ function envCard(name, description) {
   return `<div class="rounded-lg border border-border p-3"><code class="text-xs font-semibold">${name}</code><p class="mt-2 text-muted-foreground">${description}</p></div>`;
 }
 
-function miniStat(label, value) {
-  return `<div class="rounded-lg border border-border bg-card p-3"><p class="text-xs text-muted-foreground">${label}</p><p class="mt-1 truncate text-sm font-semibold">${escapeHtml(value || "—")}</p></div>`;
+function miniStat(label, value, opts = {}) {
+  return `<div class="rounded-lg border border-border bg-card p-3"><p class="text-xs text-muted-foreground">${label}</p><p class="mt-1 truncate text-sm font-semibold">${opts.html ? (value || "—") : escapeHtml(value || "—")}</p></div>`;
 }
 
 function pricingValue(row, keys) {
   const key = keys.find((candidate) => row && row[candidate] !== undefined);
   const value = key ? row[key] : undefined;
-  return value === undefined ? "—" : typeof value === "number" ? money(value) : escapeHtml(value);
+  return value === undefined ? "—" : typeof value === "number" ? moneyInline(value) : escapeHtml(value);
 }
 
 function sortRows(rows, key, dir) {
@@ -534,8 +581,8 @@ async function renderSpendChart(series) {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${money(ctx.parsed.y)}` } } },
-        scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, ticks: { callback: (value) => `$${Number(value).toFixed(2)}` } } },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${moneyText(ctx.parsed.y)}` } } },
+        scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, ticks: { callback: (value) => eurMoney(Number(value)) } } },
       },
     });
   } catch (error) {
@@ -571,8 +618,8 @@ function svgSpendChart(series) {
     <line x1="50" y1="250" x2="${width - 10}" y2="250" stroke="currentColor" opacity="0.18" />
     <line x1="50" y1="135" x2="${width - 10}" y2="135" stroke="currentColor" opacity="0.12" />
     <line x1="50" y1="20" x2="${width - 10}" y2="20" stroke="currentColor" opacity="0.12" />
-    <text x="0" y="24" fill="currentColor" opacity="0.65" font-size="12">${money(max)}</text>
-    <text x="0" y="139" fill="currentColor" opacity="0.65" font-size="12">${money(max / 2)}</text>
+    <text x="0" y="24" fill="currentColor" opacity="0.65" font-size="12">${escapeHtml(moneyText(max))}</text>
+    <text x="0" y="139" fill="currentColor" opacity="0.65" font-size="12">${escapeHtml(moneyText(max / 2))}</text>
     ${bars}
     ${labels}
   </svg>`;
@@ -667,6 +714,7 @@ const mock = (() => {
     pricing: {
       schema_version: "mock-v1",
       fetched_at: new Date().toISOString(),
+      currency: FALLBACK_CURRENCY,
       models: Object.fromEntries(models.map((model, index) => [model, { input_per_mtok: 3 + index, output_per_mtok: 15 + index * 2, cache_read_per_mtok: 0.3 + index / 10, cache_write_per_mtok: 3.75 + index / 5, premium_request: 0.04 + index / 100 }])),
     },
   };

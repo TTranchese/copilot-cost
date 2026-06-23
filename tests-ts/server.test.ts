@@ -69,7 +69,12 @@ describe("dashboard server", () => {
 
     const health = await fetch(`${base}/api/health`);
     expect(health.headers.get("content-type")).toContain("application/json");
-    expect(await health.json()).toMatchObject({ ok: true, otel_enabled: true, jsonl_files: 1 });
+    expect(await health.json()).toMatchObject({
+      ok: true,
+      otel_enabled: true,
+      jsonl_files: 1,
+      currency: { base_currency: "USD", quote_currency: "EUR" },
+    });
 
     const summary = await fetch(`${base}/api/summary`);
     expect(summary.headers.get("content-type")).toContain("application/json");
@@ -77,8 +82,9 @@ describe("dashboard server", () => {
 
     const pricing = await fetch(`${base}/api/pricing`);
     expect(pricing.headers.get("content-type")).toContain("application/json");
-    const body = (await pricing.json()) as { models: Record<string, unknown> };
+    const body = (await pricing.json()) as { currency?: { rate?: number }; models: Record<string, unknown> };
     expect(Object.keys(body.models).length).toBeGreaterThan(0);
+    expect(body.currency?.rate).toBeGreaterThan(0);
   });
 
   it("rejects requests with a foreign Host", async () => {

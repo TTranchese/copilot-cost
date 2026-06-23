@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import process from "node:process";
+import { eurSnapshot } from "../pricing/currency.js";
 import { loadPricing } from "../pricing/loader.js";
 import { refreshPricing } from "../pricing/fetcher.js";
 import { appendOtelExporterBlock, ensureOtelExporterFile, hasOtelBlock, resolveInstallPaths } from "../install.js";
@@ -60,6 +61,7 @@ function health(): Record<string, unknown> {
     otel_dir: resolveOtelDir(process.env),
     jsonl_files: files.length,
     version: packageJson.version ?? "0.0.0",
+    currency: eurSnapshot(),
   };
 }
 
@@ -99,10 +101,10 @@ async function handle(req: IncomingMessage, res: ServerResponse, expectedPort: (
     if (method === "GET" && url.pathname === "/app.js") return serveFile(res, "app.js", "text/javascript; charset=utf-8");
     if (method === "GET" && url.pathname === "/chart.umd.js") return serveFile(res, "chart.umd.js", "text/javascript; charset=utf-8");
     if (method === "GET" && url.pathname === "/api/health") return json(res, 200, health());
-    if (method === "GET" && url.pathname === "/api/pricing") return json(res, 200, loadPricing());
+    if (method === "GET" && url.pathname === "/api/pricing") return json(res, 200, { ...loadPricing(), currency: eurSnapshot() });
     if (method === "POST" && url.pathname === "/api/refresh-pricing") {
       await refreshPricing({ force: true });
-      return json(res, 200, loadPricing());
+      return json(res, 200, { ...loadPricing(), currency: eurSnapshot() });
     }
     if (method === "POST" && url.pathname === "/api/install-otel") {
       const paths = resolveInstallPaths();

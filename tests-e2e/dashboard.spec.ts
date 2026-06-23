@@ -69,6 +69,7 @@ test("renders live dashboard data and supports session drilldown", async ({ page
 
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recent sessions" })).toBeVisible();
+  await expect(page.locator("main")).toContainText("€");
   await expect(page.getByText("Build dashboard e2e")).toBeVisible();
   await expect(page.getByText("Verify E2E test")).toBeVisible();
   await expect(page.getByText("Claude opus 4.7").first()).toBeVisible();
@@ -76,10 +77,22 @@ test("renders live dashboard data and supports session drilldown", async ({ page
 
   await page.getByRole("link", { name: "Sessions" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Sessions" })).toBeVisible();
+  await expect(page.locator("main")).toContainText("€");
   await page.getByPlaceholder("Name, path, or model").fill("verify");
   await expect(page.getByText("Verify E2E test")).toBeVisible();
   await expect(page.getByText("Build dashboard e2e")).toHaveCount(0);
 
   await page.getByText("Verify E2E test").click();
   await expect(page.getByRole("dialog")).toContainText("e2e-session-test");
+  await expect(page.getByRole("dialog")).toContainText("€");
+  await page.getByRole("button", { name: "Close details" }).click();
+
+  await page.getByRole("link", { name: "Models" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Models" })).toBeVisible();
+  await expect(page.locator("main")).toContainText("€");
+
+  await page.getByRole("link", { name: "Pricing" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Pricing" })).toBeVisible();
+  await expect(page.locator("main")).toContainText("1 USD =");
+  await expect(page.locator("main")).toContainText("€");
 });
