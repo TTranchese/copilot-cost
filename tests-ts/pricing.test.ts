@@ -84,6 +84,12 @@ describe("pricing loader", () => {
     expect(normalizeModel("Auto (Claude Sonnet 4.6)")).toBe("claude-sonnet-4.6");
   });
 
+  it("maps internal and legacy model ids to best-effort public pricing aliases", () => {
+    expect(normalizeModel("copilot-nes-oct")).toBe("raptor-mini");
+    expect(normalizeModel("copilot-suggestions-himalia-001")).toBe("raptor-mini");
+    expect(normalizeModel("gpt-4o-mini-2024-07-18")).toBe("gpt-5-mini");
+  });
+
   it("computes cost using fresh, cache read, cache write, and output tokens", () => {
     const price = { vendor: "anthropic", input: 5, cached_input: 0.5, cache_write: 6.25, output: 25 };
     const cost = computeCost({ input: 38_200, cache_read: 12_000, cache_write: 3_100, output: 6_100 }, price);

@@ -21,6 +21,13 @@ export interface Pricing {
 
 type RawPricing = Record<string, unknown> & { models?: Record<string, Record<string, unknown>> };
 
+const MODEL_ALIASES: Record<string, string> = {
+  "copilot-nes-oct": "raptor-mini",
+  "copilot-suggestions-himalia-001": "raptor-mini",
+  "gpt-4o-mini": "gpt-5-mini",
+  "gpt-4o-mini-2024-07-18": "gpt-5-mini",
+};
+
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 function resolveSnapshot(): string {
@@ -59,7 +66,8 @@ export function normalizeModel(modelId: string | undefined | null): string | nul
       model = model.slice(0, -suffix.length);
     }
   }
-  return model || null;
+  if (!model) return null;
+  return MODEL_ALIASES[model] ?? model;
 }
 
 function parseYaml(text: string): RawPricing {

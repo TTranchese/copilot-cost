@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { CACHE_PRICING, SNAPSHOT, type ModelPrice, type Pricing } from "./loader.js";
+import { CACHE_PRICING, SNAPSHOT, normalizeModel, type ModelPrice, type Pricing } from "./loader.js";
 import { parseDollar, splitLines, stripComment, unquote } from "./yaml-utils.js";
 
 export type PricingData = Pricing;
@@ -18,14 +18,12 @@ const VENDOR_ALIASES: Record<string, ModelPrice["vendor"]> = {
   google: "google",
   xai: "xai",
   github: "github",
+  microsoft: "microsoft",
+  moonshot_ai: "moonshot_ai",
 };
 
 function normalizeModelName(raw: string): string {
-  return unquote(raw)
-    .replace(/\[\^[^\]]+\]/g, "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-");
+  return normalizeModel(unquote(raw)) ?? "";
 }
 
 interface RawEntry {
@@ -83,7 +81,7 @@ export function parsePricingYaml(text: string): PricingData {
     if (entry.category) {
       (row as unknown as Record<string, unknown>).category = unquote(entry.category).toLowerCase();
     }
-    models[id] = row;
+    if (!models[id]) models[id] = row;
   }
 
   if (Object.keys(models).length < 3) {
