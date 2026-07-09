@@ -3,7 +3,23 @@ import { exportCsv, models, sessions, sessionDetail, summary, timeseries } from 
 import { type NormalizedCall } from "../src/otel/parser.js";
 
 function call(partial: Partial<NormalizedCall>): NormalizedCall {
-  return { dedup_key: partial.dedup_key ?? crypto.randomUUID(), session_id: Object.hasOwn(partial, "session_id") ? partial.session_id! : "s1", ts: partial.ts ?? "2026-05-13T12:00:00.000Z", model: partial.model ?? "m1", input_tokens: partial.input_tokens ?? 0, output_tokens: partial.output_tokens ?? 0, cache_read: partial.cache_read ?? 0, cache_creation: partial.cache_creation ?? 0, reasoning: partial.reasoning ?? 0, usd_cost: partial.usd_cost ?? 0, duration_ms: partial.duration_ms ?? 0, source: partial.source ?? "cli-span" };
+  return {
+    dedup_key: partial.dedup_key ?? crypto.randomUUID(),
+    session_id: Object.hasOwn(partial, "session_id") ? partial.session_id! : "s1",
+    conversation_id: partial.conversation_id,
+    session_name: Object.hasOwn(partial, "session_name") ? partial.session_name ?? null : undefined,
+    cwd: Object.hasOwn(partial, "cwd") ? partial.cwd ?? null : undefined,
+    ts: partial.ts ?? "2026-05-13T12:00:00.000Z",
+    model: partial.model ?? "m1",
+    input_tokens: partial.input_tokens ?? 0,
+    output_tokens: partial.output_tokens ?? 0,
+    cache_read: partial.cache_read ?? 0,
+    cache_creation: partial.cache_creation ?? 0,
+    reasoning: partial.reasoning ?? 0,
+    usd_cost: partial.usd_cost ?? 0,
+    duration_ms: partial.duration_ms ?? 0,
+    source: partial.source ?? "cli-span",
+  };
 }
 
 describe("OTel aggregations", () => {
@@ -49,5 +65,19 @@ describe("OTel aggregations", () => {
   it("handles a single unknown-session call", () => {
     const rows = sessions([call({ session_id: null, usd_cost: 0.5 })]);
     expect(rows[0]?.id).toBe("unknown");
+  });
+
+  it("keeps the latest non-empty session metadata while models evolve", () => {
+    const rows = sessions([
+      call({ dedup_key: "a", session_id: "s1", ts: "2026-05-13T10:00:00.000Z", model: "auto", session_name: null, cwd: null }),
+      call({ dedup_key: "b", session_id: "s1", ts: "2026-05-13T10:01:00.000Z", model: "gpt-5.3-codex", session_name: "Named session", cwd: "C:\\repo" }),
+    ]);
+    expect(rows[0]).toMatchObject({
+      id: "s1",
+      first_model: "auto",
+      model: "gpt-5.3-codex",
+      session_name: "Named session",
+      cwd: "C:\\repo",
+    });
   });
 });

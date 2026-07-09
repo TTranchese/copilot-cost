@@ -78,13 +78,12 @@ function findMeta(meta: SessionMetaEntry[], call: NormalizedCall): SessionMetaEn
   if (!meta.length) return null;
   const callTime = Date.parse(call.ts);
   if (!Number.isFinite(callTime)) return null;
+  const targetSessionId = call.session_id ?? call.conversation_id ?? null;
 
   const minTime = callTime - META_WINDOW_MS;
   const maxTime = callTime + META_WINDOW_MS;
   const start = lowerBoundMeta(meta, minTime);
   let best: SessionMetaEntry | null = null;
-  let bestDelta = Number.POSITIVE_INFINITY;
-
   for (let i = start; i < meta.length; i += 1) {
     const entry = meta[i];
     if (!entry) continue;
@@ -92,19 +91,26 @@ function findMeta(meta: SessionMetaEntry[], call: NormalizedCall): SessionMetaEn
     if (!Number.isFinite(t)) continue;
     if (t > maxTime) break;
     const delta = Math.abs(t - callTime);
-    if (entry.model && entry.model !== call.model) continue;
-    if (delta < bestDelta) { bestDelta = delta; best = entry; }
-  }
-  if (best) return best;
-
-  for (let i = start; i < meta.length; i += 1) {
-    const entry = meta[i];
-    if (!entry) continue;
-    const t = Date.parse(entry.ts);
-    if (!Number.isFinite(t)) continue;
-    if (t > maxTime) break;
-    const delta = Math.abs(t - callTime);
-    if (delta < bestDelta) { bestDelta = delta; best = entry; }
+    const sameSession = targetSessionId !== null && entry.session_id === targetSessionId ? 1 : 0;
+    const sameModel = entry.model && entry.model === call.model ? 1 : 0;
+    const completeness = Number(Boolean(entry.session_name)) + Number(Boolean(entry.cwd)) + Number(Boolean(entry.model));
+    if (!best) {
+      best = entry;
+      continue;
+    }
+    const bestTime = Date.parse(best.ts);
+    const bestDelta = Number.isFinite(bestTime) ? Math.abs(bestTime - callTime) : Number.POSITIVE_INFINITY;
+    const bestSameSession = targetSessionId !== null && best.session_id === targetSessionId ? 1 : 0;
+    const bestSameModel = best.model && best.model === call.model ? 1 : 0;
+    const bestCompleteness = Number(Boolean(best.session_name)) + Number(Boolean(best.cwd)) + Number(Boolean(best.model));
+    if (
+      sameSession > bestSameSession ||
+      (sameSession === bestSameSession && sameModel > bestSameModel) ||
+      (sameSession === bestSameSession && sameModel === bestSameModel && completeness > bestCompleteness) ||
+      (sameSession === bestSameSession && sameModel === bestSameModel && completeness === bestCompleteness && delta < bestDelta)
+    ) {
+      best = entry;
+    }
   }
   return best;
 }

@@ -41,6 +41,10 @@ function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
 }
 
+function takeNonEmpty(current: string | null, next: string | null | undefined): string | null {
+  return next ?? current;
+}
+
 export function summary(calls: NormalizedCall[], now = new Date()): Summary {
   const lifetime = zero();
   const today = zero();
@@ -79,11 +83,17 @@ export function sessions(calls: NormalizedCall[]): SessionRow[] {
     if (call.ts < row.started_at) {
       row.started_at = call.ts;
       row.first_model = call.model;
+      row.session_name = takeNonEmpty(row.session_name, call.session_name ?? null);
+      row.cwd = takeNonEmpty(row.cwd, call.cwd ?? null);
     }
     if (call.ts >= row.last_seen_at) {
       row.last_seen_at = call.ts;
       row.model = call.model;
+      row.session_name = takeNonEmpty(row.session_name, call.session_name ?? null);
+      row.cwd = takeNonEmpty(row.cwd, call.cwd ?? null);
     }
+    row.session_name = takeNonEmpty(row.session_name, call.session_name ?? null);
+    row.cwd = takeNonEmpty(row.cwd, call.cwd ?? null);
     row.usd_cost += call.usd_cost;
     row.total_input_tokens += call.input_tokens;
     row.total_output_tokens += call.output_tokens;

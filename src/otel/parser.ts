@@ -110,7 +110,7 @@ export function isChatSpan(record: unknown): boolean {
 export function normalizeSpan(record: unknown): NormalizedCall | null {
   if (!isObject(record) || !isChatSpan(record)) return null;
   const a = attrs(record);
-  const rawModel = str(a["gen_ai.request.model"] ?? a["gen_ai.response.model"] ?? a["model"] ?? record.model);
+  const rawModel = str(a["gen_ai.response.model"] ?? a["gen_ai.request.model"] ?? a["model"] ?? record.model);
   const model = normalizeModel(rawModel) ?? rawModel;
   if (!model) return null;
 

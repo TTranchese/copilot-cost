@@ -92,6 +92,39 @@ describe("OTel reader", () => {
     expect(call.cwd).toBe("C:\\dev\\repo");
   });
 
+  it("prefers same-session richer metadata over closer blank entries", () => {
+    writeFileSync(
+      path.join(root, "a.jsonl"),
+      `${JSON.stringify({
+        traceId: "trace",
+        spanId: "a",
+        startTime: [1_700_000_000, 0],
+        endTime: [1_700_000_001, 0],
+        attributes: {
+          "gen_ai.operation.name": "chat",
+          "gen_ai.request.model": "auto",
+          "gen_ai.response.model": "gpt-5.3-codex",
+          "gen_ai.usage.input_tokens": 10,
+          "gen_ai.usage.output_tokens": 1,
+          "gen_ai.conversation.id": "conv-x",
+        },
+      })}\n`,
+      "utf-8",
+    );
+    const callTime = 1_700_000_000_000;
+    const meta = [
+      { ts: new Date(callTime + 1_000).toISOString(), session_id: "conv-x", session_name: null, cwd: null, model: "auto" },
+      { ts: new Date(callTime + 3_000).toISOString(), session_id: "conv-x", session_name: "Expected", cwd: "C:\\dev\\repo", model: "auto" },
+      { ts: new Date(callTime + 2_000).toISOString(), session_id: "other-session", session_name: "Other", cwd: "C:\\elsewhere", model: "gpt-5.3-codex" },
+    ];
+    writeFileSync(path.join(root, "copilot-cost-meta.jsonl"), `${meta.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf-8");
+
+    const [call] = readAllCalls();
+    expect(call.session_id).toBe("conv-x");
+    expect(call.session_name).toBe("Expected");
+    expect(call.cwd).toBe("C:\\dev\\repo");
+  });
+
   it("uses gen_ai.conversation.id when no sidecar metadata is available", () => {
     writeFileSync(path.join(root, "a.jsonl"), `${line("a")}\n`, "utf-8");
     const [call] = readAllCalls();
